@@ -1,201 +1,141 @@
 // ==MiruExtension==
-// @name         通用解析引擎·稳定版
+// @name         Anime1 + Gimy（稳定版）
 // @version      v1.0.0
 // @author       Omar
 // @lang         zh-tw
 // @license      MIT
 // @type         bangumi
-// @webSite      https://example.com
-// @package      universal-parser
-// @icon         https://example.com/favicon.ico
+// @webSite      https://anime1.me
+// @package      anime1-gimy-safe
+// @icon         https://anime1.me/favicon.ico
 // @nsfw         false
 // ==/MiruExtension==
 
 export default class extends Extension {
 
-  sites = [
-    "https://www.ymvid.com",
-    "https://agedm.org",
-    "https://yhdm.site"
-  ];
-
-  currentSite = "";
-
   headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+    "User-Agent": "Mozilla/5.0",
     "Accept-Language": "zh-CN,zh;q=0.9"
   };
 
-  async req(url, referer) {
-    return await this.request(url, {
-      headers: {
-        ...this.headers,
-        Referer: referer || "",
-        Origin: referer || ""
-      },
-      timeout: 8000
-    });
-  }
+  // ========= Anime1 =========
 
-  // ===== 首页（简单通用）=====
   async latest(page) {
-    for (let site of this.sites) {
-      try {
-        const url = `${site}`;
-        const res = await this.req(url, site);
+    try {
+      const url = `https://anime1.me/?cat=2`;
+      const res = await this.request(url, { headers: this.headers });
 
-        const list = res.match(/href="(.*?)".*?title="(.*?)"/g) || [];
+      const list = res.match(/<article[\s\S]*?<\/article>/g) || [];
 
-        if (list.length) {
-          this.currentSite = site;
+      return list.slice(0, 30).map(i => ({
+        title: i.match(/<h2.*?>(.*?)<\/h2>/)?.[1]?.replace(/<.*?>/g, "") || "未知",
+        pic: "",
+        url: i.match(/href="(https:\/\/anime1\.me\/.*?)"/)?.[1] || ""
+      })).filter(i => i.url);
 
-          return list.slice(0, 20).map(i => ({
-            title: i.match(/title="(.*?)"/)?.[1] || "未知",
-            pic: "",
-            url: i.match(/href="(.*?)"/)?.[1] || ""
-          })).filter(i => i.url);
-        }
-
-      } catch {}
+    } catch {
+      return [];
     }
-
-    throw new Error("全部站点失败");
   }
 
-  // ===== 搜索（弱通用）=====
   async search(kw, page) {
-    const key = encodeURIComponent(kw || "");
+    try {
+      const key = encodeURIComponent(kw || "");
+      const url = `https://anime1.me/?s=${key}`;
+      const res = await this.request(url, { headers: this.headers });
 
-    for (let site of this.sites) {
-      try {
-        const url = `${site}/search/${key}`;
-        const res = await this.req(url, site);
+      const list = res.match(/<article[\s\S]*?<\/article>/g) || [];
 
-        const list = res.match(/href="(.*?)".*?title="(.*?)"/g) || [];
+      return list.map(i => ({
+        title: i.match(/<h2.*?>(.*?)<\/h2>/)?.[1]?.replace(/<.*?>/g, "") || "未知",
+        pic: "",
+        url: i.match(/href="(https:\/\/anime1\.me\/.*?)"/)?.[1] || ""
+      })).filter(i => i.url);
 
-        if (list.length) {
-          this.currentSite = site;
-
-          return list.map(i => ({
-            title: i.match(/title="(.*?)"/)?.[1] || "未知",
-            pic: "",
-            url: i.match(/href="(.*?)"/)?.[1] || ""
-          })).filter(i => i.url);
-        }
-
-      } catch {}
+    } catch {
+      return [];
     }
-
-    return [];
   }
 
-  // ===== 详情（极简通用）=====
   async detail(url) {
-    const full = url.startsWith("http")
-      ? url
-      : this.currentSite + url;
+    try {
+      const res = await this.request(url, { headers: this.headers });
 
-    const res = await this.req(full, this.currentSite);
+      const title = res.match(/<h1.*?>(.*?)<\/h1>/)?.[1] || "Anime1";
 
-    const title = res.match(/<h1.*?>(.*?)<\/h1>/)?.[1] || "未知";
-
-    // 👉 通用：抓所有 a 当播放列表
-    const links = res.match(/<a href="(.*?)".*?>(.*?)<\/a>/g) || [];
-
-    const urls = links.map(l => {
-      const m = l.match(/href="(.*?)".*?>(.*?)<\/a>/);
+      // Anime1 每集一个页面，直接当播放
       return {
-        name: m?.[2]?.replace(/<.*?>/g, "") || "播放",
-        url: m?.[1] || ""
+        title,
+        desc: "",
+        episodes: [{
+          title: "播放",
+          urls: [{
+            name: "播放",
+            url: url || ""
+          }]
+        }]
       };
-    }).filter(i => i.url);
 
-    return {
-      title,
-      desc: "",
-      episodes: [{
-        title: "播放列表",
-        urls: urls.slice(0, 30)
-      }]
-    };
+    } catch {
+      return {
+        title: "加载失败",
+        desc: "",
+        episodes: []
+      };
+    }
   }
 
-  // ===== 通用解析核心 =====
-  async extractVideo(html, base) {
+  // ========= 通用播放 =========
 
-    // 1️⃣ 直接抓 m3u8
-    let m3u8 = html.match(/https?:\/\/[^"' ]+\.m3u8[^"' ]*/);
-    if (m3u8) return m3u8[0];
-
-    // 2️⃣ 抓 mp4
-    let mp4 = html.match(/https?:\/\/[^"' ]+\.mp4[^"' ]*/);
-    if (mp4) return mp4[0];
-
-    // 3️⃣ player JSON（MacCMS）
-    let player = html.match(/player_.*?=\s*(\{[\s\S]*?\})/);
-    if (player) {
-      try {
-        let obj = JSON.parse(player[1]);
-        let u = obj?.url || "";
-
-        if (u.includes(".m3u8") || u.includes(".mp4")) return u;
-
-        // 可能是解析页
-        if (u.startsWith("http")) {
-          try {
-            let html2 = await this.req(u, base);
-            let m = html2.match(/https?:\/\/.*?\.m3u8/);
-            if (m) return m[0];
-          } catch {}
-        }
-
-      } catch {}
-    }
-
-    // 4️⃣ iframe 二跳
-    let iframe = html.match(/<iframe.*?src="(.*?)"/);
-    if (iframe) {
-      let src = iframe[1] || "";
-      if (!src.startsWith("http")) {
-        src = base + src;
-      }
-
-      try {
-        let html2 = await this.req(src, base);
-        let m = html2.match(/https?:\/\/.*?\.m3u8/);
-        if (m) return m[0];
-      } catch {}
-    }
-
-    return null;
-  }
-
-  // ===== 播放 =====
   async watch(url) {
 
-    let full = url.startsWith("http")
-      ? url
-      : this.currentSite + url;
-
     try {
-      const html = await this.req(full, this.currentSite);
+      const html = await this.request(url, { headers: this.headers });
 
-      // 多策略解析
-      const video = await this.extractVideo(html, this.currentSite);
-
-      if (video) {
+      // 🎯 Anime1：直接抓 m3u8
+      let m3u8 = html.match(/https?:\/\/[^"' ]+\.m3u8[^"' ]*/);
+      if (m3u8) {
         return {
-          type: video.includes(".m3u8") ? "hls" : "mp4",
-          url: video,
-          headers: {
-            Referer: this.currentSite,
-            Origin: this.currentSite
-          }
+          type: "hls",
+          url: m3u8[0],
+          headers: { Referer: url }
         };
+      }
+
+      // 🎯 Gimy / 其他：抓 mp4
+      let mp4 = html.match(/https?:\/\/[^"' ]+\.mp4[^"' ]*/);
+      if (mp4) {
+        return {
+          type: "mp4",
+          url: mp4[0],
+          headers: { Referer: url }
+        };
+      }
+
+      // 🎯 iframe 解析
+      let iframe = html.match(/<iframe.*?src="(.*?)"/);
+      if (iframe) {
+        let src = iframe[1] || "";
+
+        if (!src.startsWith("http")) {
+          const u = new URL(url);
+          src = u.origin + src;
+        }
+
+        const html2 = await this.request(src, { headers: this.headers });
+
+        let m3u8_2 = html2.match(/https?:\/\/.*?\.m3u8/);
+        if (m3u8_2) {
+          return {
+            type: "hls",
+            url: m3u8_2[0],
+            headers: { Referer: src }
+          };
+        }
       }
 
     } catch {}
 
-    throw new Error("解析失败");
+    throw new Error("无法解析播放源");
   }
 }
